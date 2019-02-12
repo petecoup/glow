@@ -130,12 +130,12 @@ void LLVMIRGen::loadBaseAddresses(llvm::IRBuilder<> &builder) {
   // Load the base addresses at the beginning of the entry function once they
   // are set. They won't change after this point and all relative addressing
   // computations will simply use them.
-  baseActivationsAddr_ = builder.CreatePtrToInt(F->args().begin() + 2,
-                                                llvm::Type::getInt64Ty(ctx_));
+  auto sizeTTy = builder.getIntNTy(TM_->getPointerSizeInBits(0));
+  baseActivationsAddr_ = builder.CreatePtrToInt(F->args().begin() + 2, sizeTTy);
   baseConstantWeightVarsAddr_ =
-      builder.CreatePtrToInt(F->args().begin(), llvm::Type::getInt64Ty(ctx_));
+      builder.CreatePtrToInt(F->args().begin(), sizeTTy);
   baseMutableWeightVarsAddr_ = builder.CreatePtrToInt(
-      F->args().begin() + 1, llvm::Type::getInt64Ty(ctx_));
+      F->args().begin() + 1, sizeTTy);
   offsetsArray_ = F->args().begin() + 3;
 }
 
@@ -200,7 +200,8 @@ void LLVMIRGen::initCodeGen() {
 
   // Create the entry function into the LLVM module.
   auto int8PtrTy = llvm::Type::getInt8PtrTy(ctx_);
-  auto sizeTPtrTy = llvm::Type::getIntNPtrTy(ctx_, sizeof(size_t) * 8);
+  auto sizeTPtrTy = llvm::Type::getIntNPtrTy(ctx_,
+                                             TM_->getPointerSizeInBits(0));
   // The entry point has the following API:
   // void entry(uint8_t *baseConstantWeightVars, uint8_t
   // *baseInoutWeightVars, uint8_t *baseActivations, size_t *offsets);
@@ -305,7 +306,7 @@ llvm::Value *LLVMIRGen::emitValueAddress(llvm::IRBuilder<> &builder,
                                          const glow::Value *val) {
   assert(allocationsInfo_.allocatedAddress_.count(val) &&
          "Value address was not allocated");
-  auto sizeTTy = builder.getIntNTy(sizeof(size_t) * 8);
+  auto sizeTTy = builder.getIntNTy(TM_->getPointerSizeInBits(0));
   llvm::Type *T = nullptr;
 
   switch (val->getElementType()) {
@@ -359,7 +360,7 @@ llvm::Value *LLVMIRGen::emitValueAddress(llvm::IRBuilder<> &builder,
 llvm::Value *
 LLVMIRGen::emitConstOffsetsArray(llvm::IRBuilder<> &builder,
                                  const AllocationsInfo &allocationsInfo) {
-  auto sizeTType = builder.getIntNTy(sizeof(size_t) * 8);
+  auto sizeTType = builder.getIntNTy(TM_->getPointerSizeInBits(0));
   std::vector<llvm::Constant *> elems(allocationsInfo.valueNumbers_.size());
   for (auto &I : allocationsInfo.valueNumbers_) {
     auto *V = I.first;
@@ -389,7 +390,7 @@ template <typename T>
 llvm::Value *LLVMIRGen::emitConstSizeTArray(llvm::IRBuilder<> &builder,
                                             llvm::ArrayRef<T> vals) {
   assert(std::is_integral<T>() && "Can only convert integral type to size_t.");
-  auto SizeTType = builder.getIntNTy(sizeof(size_t) * 8);
+  auto SizeTType = builder.getIntNTy(TM_->getPointerSizeInBits(0));
   std::vector<llvm::Constant *> elems;
   for (auto I : vals) {
     assert(I >= 0 && "Only allow casting positive values into size_t.");
@@ -433,7 +434,7 @@ llvm::Value *LLVMIRGen::emitValueDims(llvm::IRBuilder<> &builder,
 
 llvm::Value *LLVMIRGen::emitValueSize(llvm::IRBuilder<> &builder,
                                       const glow::Value *val) {
-  return builder.getIntN(sizeof(size_t) * 8, val->size());
+  return builder.getIntN(TM_->getPointerSizeInBits(0), val->size());
 }
 
 llvm::Value *LLVMIRGen::emitConstF32(llvm::IRBuilder<> &builder, float val) {
@@ -449,7 +450,7 @@ llvm::Value *LLVMIRGen::emitConstI8(llvm::IRBuilder<> &builder, int8_t val) {
 }
 
 llvm::Value *LLVMIRGen::emitConstSizeT(llvm::IRBuilder<> &builder, size_t val) {
-  return builder.getIntN(sizeof(size_t) * 8, val);
+  return builder.getIntN(TM_->getPointerSizeInBits(0), val);
 }
 
 llvm::Value *LLVMIRGen::emitConst(llvm::IRBuilder<> &builder, float val,
@@ -533,8 +534,8 @@ llvm::Function *LLVMIRGen::getFunction(const std::string &name,
 /// the second BB is the loop exit BB.
 static std::pair<llvm::BasicBlock *, llvm::BasicBlock *>
 createLoop(llvm::IRBuilder<> &builder, llvm::LLVMContext &ctx,
-           llvm::Value *numElements) {
-  auto sizeTTy = builder.getIntNTy(sizeof(size_t) * 8);
+           llvm::Value *numElements, const llvm::TargetMachine &TM) {
+  auto sizeTTy = builder.getIntNTy(TM.getPointerSizeInBits(0));
   auto *initVal = llvm::ConstantInt::get(sizeTTy, 0);
 
   // Make the new basic block for the loop header. Insert it after current
@@ -634,7 +635,7 @@ void LLVMIRGen::emitDataParallelKernelImpl(
   auto *numElements =
       emitValueSize(kernelBuilder, bundle[0]->getOperand(0).first);
   // Create a loop inside the stacked kernel function being generated.
-  auto loopBBs = createLoop(kernelBuilder, ctx_, numElements);
+  auto loopBBs = createLoop(kernelBuilder, ctx_, numElements, *TM_);
 
   // Get the index parameter of the loop.
   // This is the PHI node of the BB.
